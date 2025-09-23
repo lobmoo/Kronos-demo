@@ -17,8 +17,8 @@ from model import KronosTokenizer, Kronos, KronosPredictor
 # --- Configuration ---
 Config = {
     "REPO_PATH": Path(__file__).parent.resolve(),
-    "MODEL_PATH": "../Kronos_model",
-    "SYMBOL": 'BTCUSDT',
+    "MODEL_PATH": "./",
+    "SYMBOL": 'DOGEUSDT',
     "INTERVAL": '1h',
     "HIST_POINTS": 360,
     "PRED_HORIZON": 24,
@@ -30,8 +30,15 @@ Config = {
 def load_model():
     """Loads the Kronos model and tokenizer."""
     print("Loading Kronos model...")
+    # tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base", cache_dir=Config["MODEL_PATH"])
+    # model = Kronos.from_pretrained("NeoQuasar/Kronos-base", cache_dir=Config["MODEL_PATH"])
+
+
     tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-2k", cache_dir=Config["MODEL_PATH"])
     model = Kronos.from_pretrained("NeoQuasar/Kronos-mini", cache_dir=Config["MODEL_PATH"])
+    # tokenizer = KronosTokenizer.from_pretrained('./neo/Kronos-Tokenizer-base/')
+    # model = Kronos.from_pretrained("./neo/Kronos-small/")
+
     tokenizer.eval()
     model.eval()
     predictor = KronosPredictor(model, tokenizer, device="cpu", max_context=512)
@@ -131,7 +138,11 @@ def calculate_metrics(hist_df, close_preds_df, v_close_preds_df):
 
 def create_plot(hist_df, close_preds_df, volume_preds_df):
     """Generates and saves a comprehensive forecast chart."""
+    # 启用交互模式以确保图片显示
+    plt.ion()
     print("Generating comprehensive forecast chart...")
+
+
     # plt.style.use('seaborn-v0_8-whitegrid')
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(15, 10), sharex=True,
@@ -164,9 +175,21 @@ def create_plot(hist_df, close_preds_df, volume_preds_df):
         ax.tick_params(axis='x', rotation=30)
 
     fig.tight_layout()
-    chart_path = Config["REPO_PATH"] / 'prediction_chart.png'
+    
+    # 确保所有绘制命令都执行完毕
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    
+    # 保存图片
+    chart_path = Config["REPO_PATH"] / "prediction_chart.png"
     fig.savefig(chart_path, dpi=120)
-    plt.close(fig)
+    print(f"Chart saved to: {chart_path}")
+    
+    # 显示图片 - 确保绘制完成后再显示
+    plt.show()
+    plt.pause(1.0)  # 增加暂停时间确保图片完全加载
+    print("Chart displayed. Close the window manually or press Ctrl+C to interrupt the program.")
+    #plt.close(fig)
     print(f"Chart saved to: {chart_path}")
 
 
@@ -257,27 +280,31 @@ def main_task(model):
 
 def run_scheduler(model):
     """A continuous scheduler that runs the main task hourly."""
-    while True:
-        now = datetime.now(timezone.utc)
-        next_run_time = (now + timedelta(hours=1)).replace(minute=0, second=5, microsecond=0)
-        sleep_seconds = (next_run_time - now).total_seconds()
+    try:
+        while True:
+            now = datetime.now(timezone.utc)
+            next_run_time = (now + timedelta(hours=1)).replace(minute=0, second=5, microsecond=0)
+            sleep_seconds = (next_run_time - now).total_seconds()
 
-        if sleep_seconds > 0:
-            print(f"Current time: {now:%Y-%m-%d %H:%M:%S UTC}.")
-            print(f"Next run at: {next_run_time:%Y-%m-%d %H:%M:%S UTC}. Waiting for {sleep_seconds:.0f} seconds...")
-            time.sleep(sleep_seconds)
+            if sleep_seconds > 0:
+                print(f"Current time: {now:%Y-%m-%d %H:%M:%S UTC}.")
+                print(f"Next run at: {next_run_time:%Y-%m-%d %H:%M:%S UTC}. Waiting for {sleep_seconds:.0f} seconds...")
+                time.sleep(sleep_seconds)
 
-        try:
-            main_task(model)
-        except Exception as e:
-            print(f"\n!!!!!! A critical error occurred in the main task !!!!!!!")
-            print(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
-            print("Retrying in 5 minutes...")
-            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-            time.sleep(300)
-
+            try:
+                main_task(model)
+            except Exception as e:
+                print(f"\n!!!!!! A critical error occurred in the main task !!!!!!!")
+                print(f"Error: {e}")
+                import traceback
+                traceback.print_exc()
+                print("Retrying in 5 minutes...")
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+                time.sleep(300)
+    except KeyboardInterrupt:
+        print("\n\nProgram interrupted by user (Ctrl+C). Cleaning up...")
+        plt.close('all')  # 关闭所有图片窗口
+        print("All plot windows closed. Exiting gracefully.")
 
 if __name__ == '__main__':
     model_path = Path(Config["MODEL_PATH"])
