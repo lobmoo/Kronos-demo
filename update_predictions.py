@@ -264,6 +264,13 @@ def git_commit_and_push(commit_message):
             print(f"A Git error occurred:\n--- STDOUT ---\n{e.stdout}\n--- STDERR ---\n{e.stderr}")
 
 
+def get_latest_commit():
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True
+    ).strip()
+    return commit
+
+
 # 上次发送时间，全局变量
 _last_send_time = 0
 
@@ -294,12 +301,21 @@ def send_chart_to_dingtalk():
         url = f"{DINGTALK_WEBHOOK}&timestamp={timestamp}&sign={sign}"
     else:
         url = DINGTALK_WEBHOOK
-    img_url = f"https://raw.githubusercontent.com/lobmoo/Kronos-demo/master/prediction_chart.png?ts={int(time.time())}"
+        
+        
+    commit_hash = get_latest_commit()
+    img_url = f"https://raw.githubusercontent.com/lobmoo/Kronos-demo/{commit_hash}/prediction_chart.png"
+
     data = {
-        "msgtype": "markdown",
-        "markdown": {
-            "title": "预测图",
-            "text": "![预测图](img_url)"
+        "msgtype": "feedCard",
+        "feedCard": {
+            "links": [
+                {
+                    "title": "预测图",
+                    "messageURL": "https://github.com/lobmoo/Kronos-demo",
+                    "picURL": img_url
+                }
+            ]
         }
     }
 
