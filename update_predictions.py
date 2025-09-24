@@ -3,6 +3,14 @@ import os
 import re
 import subprocess
 import time
+
+import hashlib
+import hmac
+import requests
+import base64
+import urllib.parse
+import json
+
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -14,7 +22,7 @@ from binance.client import Client
 
 from model import KronosTokenizer, Kronos, KronosPredictor
 
-# --- Configuration ---
+
 Config = {
     "REPO_PATH": Path(__file__).parent.resolve(),
     "MODEL_PATH": "./",
@@ -26,6 +34,16 @@ Config = {
     "VOL_WINDOW": 24,
 }
 
+# Config = {
+#     "REPO_PATH": Path(__file__).parent.resolve(),
+#     "MODEL_PATH": "./",
+#     "SYMBOL": 'DOGEUSDT',
+#     "INTERVAL": '5m',           # 改为10分钟间隔
+#     "HIST_POINTS": 360,         # 保持360个数据点 (360 * 10分钟 = 60小时历史数据)
+#     "PRED_HORIZON": 12,          # 改为6个时间点 (6 * 10分钟 = 1小时)
+#     "N_PREDICTIONS": 30,        # 保持不变
+#     "VOL_WINDOW": 288,          # 改为144 (24小时 * 6个10分钟间隔 = 144)
+# }
 
 def load_model():
     """Loads the Kronos model and tokenizer."""
@@ -139,10 +157,8 @@ def calculate_metrics(hist_df, close_preds_df, v_close_preds_df):
 def create_plot(hist_df, close_preds_df, volume_preds_df):
     """Generates and saves a comprehensive forecast chart."""
     # 启用交互模式以确保图片显示
-    plt.ion()
-    print("Generating comprehensive forecast chart...")
-
-
+    #plt.ion()
+    
     # plt.style.use('seaborn-v0_8-whitegrid')
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(15, 10), sharex=True,
@@ -184,13 +200,13 @@ def create_plot(hist_df, close_preds_df, volume_preds_df):
     chart_path = Config["REPO_PATH"] / "prediction_chart.png"
     fig.savefig(chart_path, dpi=120)
     print(f"Chart saved to: {chart_path}")
-    
+    plt.close(fig)
+
     # 显示图片 - 确保绘制完成后再显示
-    plt.show()
-    plt.pause(1.0)  # 增加暂停时间确保图片完全加载
-    print("Chart displayed. Close the window manually or press Ctrl+C to interrupt the program.")
-    #plt.close(fig)
-    print(f"Chart saved to: {chart_path}")
+    # plt.show()
+    # plt.pause(1.0)  # 增加暂停时间确保图片完全加载
+    # print("Chart displayed. Close the window manually or press Ctrl+C to interrupt the program.")
+   
 
 
 def update_html(upside_prob, vol_amp_prob):
@@ -248,6 +264,57 @@ def git_commit_and_push(commit_message):
             print(f"A Git error occurred:\n--- STDOUT ---\n{e.stdout}\n--- STDERR ---\n{e.stderr}")
 
 
+# 上次发送时间，全局变量
+_last_send_time = 0
+
+def send_chart_to_dingtalk():
+    global _last_send_time
+
+    DINGTALK_WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=efd9ae0e5e624aa6f24c1c5930ad53a68beb0b1aa24d7f02f7576d30ac5bde90"
+    SECRET = "SEC5f97b6aa27b9d53e3e528e1dcc637463443138caa96754119c460da439ddab89"  # 如果没加签可以留空
+
+    chart_path = Path("prediction_chart.png")
+    if not chart_path.exists():
+        print("Chart image not found, skipping DingTalk push.")
+        return
+
+    # 限速处理
+    now = time.time()
+    if now - _last_send_time < 3:  # 每条消息至少间隔 3 秒
+        wait_time = 3 - (now - _last_send_time)
+        print(f"Waiting {wait_time:.2f}s to respect DingTalk rate limit...")
+        time.sleep(wait_time)
+
+    # 生成签名（如果有 SECRET）
+    if SECRET:
+        timestamp = str(round(time.time() * 1000))
+        string_to_sign = f"{timestamp}\n{SECRET}"
+        hmac_code = hmac.new(SECRET.encode(), string_to_sign.encode(), digestmod=hashlib.sha256).digest()
+        sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+        url = f"{DINGTALK_WEBHOOK}&timestamp={timestamp}&sign={sign}"
+    else:
+        url = DINGTALK_WEBHOOK
+    img_url = f"https://raw.githubusercontent.com/lobmoo/Kronos-demo/master/prediction_chart.png?ts={int(time.time())}"
+    data = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": "预测图",
+            "text": "![预测图](img_url)"
+        }
+    }
+
+    headers = {"Content-Type": "application/json"}
+    try:
+        resp = requests.post(url, json=data, headers=headers, timeout=10)
+        if resp.status_code == 200 and resp.json().get("errcode") == 0:
+            print("Chart image sent to DingTalk group successfully.")
+            _last_send_time = time.time()  # 更新发送时间
+        else:
+            print(f"Failed to send image to DingTalk: {resp.text}")
+    except Exception as e:
+        print(f"Error sending image to DingTalk: {e}")
+
+
 def main_task(model):
     """Executes one full update cycle."""
     print("\n" + "=" * 60 + f"\nStarting update task at {datetime.now(timezone.utc)}\n" + "=" * 60)
@@ -265,6 +332,7 @@ def main_task(model):
 
     commit_message = f"Auto-update forecast for {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC"
     git_commit_and_push(commit_message)
+    send_chart_to_dingtalk()
 
     # --- 新增的内存清理步骤 ---
     # 显式删除大的DataFrame对象，帮助垃圾回收器
